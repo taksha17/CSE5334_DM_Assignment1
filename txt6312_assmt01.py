@@ -94,8 +94,10 @@ if __name__ == "__main__":
     print("(%s, %.12f)" % processor.txt6312_query("violated willingly"))
 
 
-    Readme.txt
-    Author:Taksha Sachin Thosani
-    Student Id : 1002086312
-    References :-
-    Github Program link : 
+    # Readme.txt
+    # Author:Taksha Sachin Thosani
+    # Student Id : 1002086312
+    # References :-https://github.com/mayank408/TFIDF
+    # https://github.com/bbc/Similarity
+    # https://iyzico.engineering/how-to-calculate-tf-idf-term-frequency-inverse-document-frequency-from-the-beatles-biography-in-c4c3cd968296
+    # Github Program link : https://github.com/taksha17/CSE5334_DM_Assignment1
