@@ -34,16 +34,14 @@ class TextProcessor:
         return {filename: [self.stemmer.stem(word) for word in tokens] for filename, tokens in filtered_docs.items()}
 
     def _compute_tf(self, tokens):
-        tf = {token: tokens.count(token) for token in set(tokens)}
-        for token, count in tf.items():
-            tf[token] = 1 + math.log(count)
+        tf = {token: 1 + math.log10(tokens.count(token)) for token in set(tokens)}
         return tf
 
     def _compute_idf(self, token):
         df = sum(1 for doc_tokens in self.stemmed_docs.values() if token in doc_tokens)
         if df == 0:
             return 0
-        return math.log(len(self.stemmed_docs) / df)
+        return math.log10((len(self.stemmed_docs)) / (df))
 
     def txt6312_getidf(self, token):
         return self._compute_idf(token)
@@ -52,6 +50,12 @@ class TextProcessor:
         tf = self.tf_docs[filename].get(token, 0)
         idf = self.txt6312_getidf(token)
         return tf * idf
+    
+    def _normalize_document(self, filename):
+        vector_magnitude = math.sqrt(sum(weight**2 for weight in self.tf_docs[filename].values()))
+        for token, weight in self.tf_docs[filename].items():
+            self.tf_docs[filename][token] = weight / vector_magnitude
+
 
     def txt6312_query(self, q):
         q = q.lower()
@@ -63,15 +67,14 @@ class TextProcessor:
         max_sim = -float('inf')
         best_doc = None
         for filename, doc_tokens in self.stemmed_docs.items():
-            dot_product = sum(tf_query[token] * self.txt6312_getweight(filename, token) for token in tokens)
+            dot_product = sum(tf_query[token] * self.txt6312_getweight(filename, token) for token in tokens if token in doc_tokens)
             doc_length = math.sqrt(sum(self.txt6312_getweight(filename, token)**2 for token in doc_tokens))
             q_length = math.sqrt(sum(tf**2 for tf in tf_query.values()))
-            cosine_sim = dot_product / (doc_length * q_length)
+            cosine_sim = dot_product / (doc_length * q_length) if doc_length and q_length else 0
             if cosine_sim > max_sim:
                 max_sim = cosine_sim
                 best_doc = filename
         return best_doc, max_sim
-
 
 if __name__ == "__main__":
     processor = TextProcessor('./US_Inaugural_Addresses')
@@ -92,6 +95,7 @@ if __name__ == "__main__":
     print("(%s, %.12f)" % processor.txt6312_query("false public"))
     print("(%s, %.12f)" % processor.txt6312_query("people institutions"))
     print("(%s, %.12f)" % processor.txt6312_query("violated willingly"))
+
 
 
     # Readme.txt
