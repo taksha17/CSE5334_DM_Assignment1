@@ -1,100 +1,133 @@
 import os
 import math
+import operator
 from nltk.tokenize import RegexpTokenizer
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
+from collections import Counter
 
-class TextProcessor:
-    def __init__(self, corpusroot):
-        self.corpusroot = corpusroot
-        self.docs = self._load_documents()
-        self.tokenizer = RegexpTokenizer(r'[a-zA-Z]+')
-        self.stop_words = set(stopwords.words('english'))
-        self.stemmer = PorterStemmer()
-        self.stemmed_docs = self._preprocess_documents()
-        self.tf_docs = {filename: self._compute_tf(tokens) for filename, tokens in self.stemmed_docs.items()}
-
-    def _load_documents(self):
-        docs = {}
-        for filename in os.listdir(self.corpusroot):
-            if filename.startswith('0') or filename.startswith('1'):
-                try:
-                    with open(os.path.join(self.corpusroot, filename), "r", encoding='windows-1252') as file:
-                        doc = file.read().lower()
-                        docs[filename] = doc
-                except FileNotFoundError:
-                    print(f"Error: {filename} not found.")
-                except Exception as e:
-                    print(f"Error reading {filename}: {e}")
-        return docs
-
-    def _preprocess_documents(self):
-        tokenized_docs = {filename: self.tokenizer.tokenize(doc) for filename, doc in self.docs.items()}
-        filtered_docs = {filename: [word for word in tokens if word not in self.stop_words] for filename, tokens in tokenized_docs.items()}
-        return {filename: [self.stemmer.stem(word) for word in tokens] for filename, tokens in filtered_docs.items()}
-
-    def _compute_tf(self, tokens):
-        tf = {token: 1 + math.log10(tokens.count(token)) for token in set(tokens)}
-        return tf
-
-    def _compute_idf(self, token):
-        df = sum(1 for doc_tokens in self.stemmed_docs.values() if token in doc_tokens)
-        if df == 0:
-            return 0
-        return math.log10((len(self.stemmed_docs)) / (df))
-
-    def txt6312_getidf(self, token):
-        return self._compute_idf(token)
-
-    def txt6312_getweight(self, filename, token):
-        tf = self.tf_docs[filename].get(token, 0)
-        idf = self.txt6312_getidf(token)
-        return tf * idf
-    
-    def _normalize_document(self, filename):
-        vector_magnitude = math.sqrt(sum(weight**2 for weight in self.tf_docs[filename].values()))
-        for token, weight in self.tf_docs[filename].items():
-            self.tf_docs[filename][token] = weight / vector_magnitude
+stemmer = PorterStemmer()
+tokenizer = RegexpTokenizer(r'[a-zA-Z]+')
+corpusroot = './US_Inaugural_Addresses'
+vector = {}
+df = Counter()
+tfs = {}
+lengths = Counter()
+postings_list = {}
 
 
-    def txt6312_query(self, q):
-        q = q.lower()
-        tokens = self.tokenizer.tokenize(q)
-        tokens = [word for word in tokens if word not in self.stop_words]
-        tokens = [self.stemmer.stem(word) for word in tokens]
-        tf_query = self._compute_tf(tokens)
-        
-        max_sim = -float('inf')
-        best_doc = None
-        for filename, doc_tokens in self.stemmed_docs.items():
-            dot_product = sum(tf_query[token] * self.txt6312_getweight(filename, token) for token in tokens if token in doc_tokens)
-            doc_length = math.sqrt(sum(self.txt6312_getweight(filename, token)**2 for token in doc_tokens))
-            q_length = math.sqrt(sum(tf**2 for tf in tf_query.values()))
-            cosine_sim = dot_product / (doc_length * q_length) if doc_length and q_length else 0
-            if cosine_sim > max_sim:
-                max_sim = cosine_sim
-                best_doc = filename
-        return best_doc, max_sim
+def txt6312_root_files_count(directory):
+    """Count the number of files in the directory."""
+    return len(os.listdir(directory))
 
-if __name__ == "__main__":
-    processor = TextProcessor('./US_Inaugural_Addresses')
-    print("%.12f" % processor.txt6312_getidf('british'))
-    print("%.12f" % processor.txt6312_getidf('union'))
-    print("%.12f" % processor.txt6312_getidf('war'))
-    print("%.12f" % processor.txt6312_getidf('military'))
-    print("%.12f" % processor.txt6312_getidf('great'))
-    print("--------------")
-    print("%.12f" % processor.txt6312_getweight('02_washington_1793.txt','arrive'))
-    print("%.12f" % processor.txt6312_getweight('07_madison_1813.txt','war'))
-    print("%.12f" % processor.txt6312_getweight('12_jackson_1833.txt','union'))
-    print("%.12f" % processor.txt6312_getweight('09_monroe_1821.txt','british'))
-    print("%.12f" % processor.txt6312_getweight('05_jefferson_1805.txt','public'))
-    print("--------------")
-    print("(%s, %.12f)" % processor.txt6312_query("pleasing people"))
-    print("(%s, %.12f)" % processor.txt6312_query("british war"))
-    print("(%s, %.12f)" % processor.txt6312_query("false public"))
-    print("(%s, %.12f)" % processor.txt6312_query("people institutions"))
-    print("(%s, %.12f)" % processor.txt6312_query("violated willingly"))
+
+def txt6312_preprocess_document(doc):
+    """Preprocess a document: tokenize, remove stopwords, and stem."""
+    tokens = tokenizer.tokenize(doc.lower())
+    sw = stopwords.words('english')
+    return [stemmer.stem(token) for token in tokens if token not in sw]
+
+
+def txt6312_calculate_weight(filename, token):
+    """Calculate the weight of a token in a document without normalizing."""
+    idf = txt6312_getidf(token)
+    return (1 + math.log10(tfs[filename][token])) * idf
+
+
+def txt6312_getidf(token):
+    """Calculate IDF for a token."""
+    if df[token] == 0:
+        return -1
+    return math.log10(len(tfs) / df[token])
+
+
+def txt6312_initialize_data_structures():
+    for filename in os.listdir(corpusroot):
+        if filename.startswith(('0', '1')):
+            with open(os.path.join(corpusroot, filename), "r", encoding='windows-1252') as f:
+                tokens = txt6312_preprocess_document(f.read())
+                tf = Counter(tokens)
+                df.update(list(set(tokens)))
+                tfs[filename] = tf.copy()
+
+    for filename in tfs:
+        vector[filename] = Counter()
+        length = 0
+        for token in tfs[filename]:
+            weight = txt6312_calculate_weight(filename, token)
+            vector[filename][token] = weight
+            length += weight ** 2
+        lengths[filename] = math.sqrt(length)
+
+    for filename in vector:
+        for token in vector[filename]:
+            vector[filename][token] /= lengths[filename]
+            if token not in postings_list:
+                postings_list[token] = Counter()
+            postings_list[token][filename] = vector[filename][token]
+
+
+def txt6312_getweight(filename, token):
+    """Get the normalized weight of a token in a document."""
+    return vector[filename][stemmer.stem(token)]
+
+
+def txt6312_query(qstring):
+    tokens = txt6312_preprocess_document(qstring)
+    tokens = dict(Counter(tokens))
+    normalizingfactor = sum([(1 + math.log10(val)) ** 2 for val in tokens.values()]) ** 0.5
+
+    for token in tokens:
+        tokens[token] /= normalizingfactor
+
+    if not any(token in postings_list for token in tokens):
+        return ("None", 0)
+
+    document_scores = {}
+    not_in_topten = []
+    toptenpostings_list = {token: postings_list[token] for token in tokens if token in postings_list}
+
+    for token in toptenpostings_list:
+        for filename in toptenpostings_list[token]:
+            if filename not in document_scores:
+                document_scores[filename] = 0
+
+    for token in toptenpostings_list:
+        for filename in document_scores:
+            if filename in toptenpostings_list[token]:
+                document_scores[filename] += toptenpostings_list[token][filename] * tokens[token]
+            elif token in postings_list and filename in postings_list[token]:
+                document_scores[filename] += postings_list[token][filename] * tokens[token]
+                not_in_topten.append(filename)
+
+    sorted_scores = sorted(document_scores.items(), key=operator.itemgetter(1), reverse=True)
+
+    if sorted_scores[0][0] in not_in_topten:
+        return ("fetch more", 0)
+    else:
+        return sorted_scores[0]
+
+# Main execution
+txt6312_initialize_data_structures()
+
+print("%.12f" % txt6312_getidf('british'))
+print("%.12f" % txt6312_getidf('union'))
+print("%.12f" % txt6312_getidf('war'))
+print("%.12f" % txt6312_getidf('power'))
+print("%.12f" % txt6312_getidf('great'))
+print("--------------")
+print("%.12f" % txt6312_getweight('02_washington_1793.txt', 'arrive'))
+print("%.12f" % txt6312_getweight('07_madison_1813.txt', 'war'))
+print("%.12f" % txt6312_getweight('12_jackson_1833.txt', 'union'))
+print("%.12f" % txt6312_getweight('09_monroe_1821.txt', 'british'))
+print("%.12f" % txt6312_getweight('05_jefferson_1805.txt', 'public'))
+print("--------------")
+print("(%s, %.12f)" % txt6312_query("pleasing people"))
+print("(%s, %.12f)" % txt6312_query("british war"))
+print("(%s, %.12f)" % txt6312_query("false public"))
+print("(%s, %.12f)" % txt6312_query("people institutions"))
+print("(%s, %.12f)" % txt6312_query("violated willingly"))
+
 
 
 
